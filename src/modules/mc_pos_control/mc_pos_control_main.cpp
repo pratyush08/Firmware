@@ -871,7 +871,7 @@ MulticopterPositionControl::update_ref()
 	// The reference point is only allowed to change when the vehicle is in standby state which is the
 	// normal state when the estimator origin is set. Changing reference point in flight causes large controller
 	// setpoint changes. Changing reference point in other arming states is untested and shoud not be performed.
-	if ((_local_pos.ref_timestamp != _ref_timestamp)
+    if ((_local_pos.ref_timestamp != _ref_timestamp)
 	    && ((_vehicle_status.arming_state == vehicle_status_s::ARMING_STATE_STANDBY)
 		|| (!_ref_alt_is_global && _local_pos.z_global))) {
 		double lat_sp, lon_sp;
@@ -884,7 +884,7 @@ MulticopterPositionControl::update_ref()
 			// the altitude setpoint is the reference altitude (Z up) plus the (Z down)
 			// NED setpoint, multiplied out to minus
 			alt_sp = _ref_alt - _pos_sp(2);
-		}
+        }
 
 		// update local projection reference including altitude
 		map_projection_init(&_ref_pos, _local_pos.ref_lat, _local_pos.ref_lon);
@@ -1571,8 +1571,11 @@ MulticopterPositionControl::control_non_manual()
 void
 MulticopterPositionControl::control_offboard()
 {
+    /* _pos_sp_triplet.current.valid  = 1*/
 	if (_pos_sp_triplet.current.valid) {
 
+        /* _pos_sp_triplet.current.position_valid = 1*/
+        /* _pos_sp_triplet.current.velocity_valid = 0*/
 		if (_control_mode.flag_control_position_enabled && _pos_sp_triplet.current.position_valid) {
 			/* control position */
 			_pos_sp(0) = _pos_sp_triplet.current.x;
@@ -1621,6 +1624,9 @@ MulticopterPositionControl::control_offboard()
 			}
 		}
 
+        /* _pos_sp_triplet.current.alt_valid = 1 */
+        /* _pos_sp_triplet.current.velocity_valid = 0*/
+
 		if (_control_mode.flag_control_altitude_enabled && _pos_sp_triplet.current.alt_valid) {
 			/* control altitude as it is enabled */
 			_pos_sp(2) = _pos_sp_triplet.current.z;
@@ -1651,6 +1657,10 @@ MulticopterPositionControl::control_offboard()
 				_hold_offboard_z = false;
 			}
 		}
+
+        /*_pos_sp_triplet.current.yaw_valid = 1 */
+        /*_pos_sp_triplet.current.yawspeed_valid = 0 */
+
 
 		if (_pos_sp_triplet.current.yaw_valid) {
 			_att_sp.yaw_body = _pos_sp_triplet.current.yaw;
@@ -2335,6 +2345,7 @@ MulticopterPositionControl::update_velocity_derivative()
 	/* Update velocity derivative,
 	 * independent of the current flight mode
 	 */
+
 	if (_local_pos.timestamp == 0) {
 		return;
 	}
@@ -2369,7 +2380,7 @@ MulticopterPositionControl::update_velocity_derivative()
 			_vel(2) = _local_pos.vz;
 		}
 
-		if (!_run_alt_control) {
+        if (!_run_alt_control) {
 			/* set velocity to the derivative of position
 			 * because it has less bias but blend it in across the landing speed range*/
 			float weighting = fminf(fabsf(_vel_sp(2)) / _params.land_speed, 1.0f);
@@ -2398,9 +2409,9 @@ MulticopterPositionControl::do_control()
 	_run_pos_control = true;
 	_run_alt_control = true;
 
-	if (_control_mode.flag_control_manual_enabled) {
+    if (_control_mode.flag_control_manual_enabled) {
 		/* manual control */
-		control_manual();
+        control_manual();
 		_mode_auto = false;
 
 		/* we set triplets to false
@@ -3056,6 +3067,10 @@ MulticopterPositionControl::task_main()
 	fds[0].fd = _local_pos_sub;
 	fds[0].events = POLLIN;
 
+
+    bool prev_val = false;
+    bool curr_val = false;
+
 	while (!_task_should_exit) {
 		/* wait for up to 20ms for data */
 		int pret = px4_poll(&fds[0], (sizeof(fds) / sizeof(fds[0])), 20);
@@ -3084,7 +3099,7 @@ MulticopterPositionControl::task_main()
 
 		/* set default max velocity in xy to vel_max
 		 * Apply estimator limits if applicable */
-		if (_local_pos.vxy_max > 0.001f) {
+        if (_local_pos.vxy_max >  0.001f) {
 			// use the minimum of the estimator and user specified limit
 			_vel_max_xy = fminf(_params.vel_max_xy, _local_pos.vxy_max);
 			// Allow for a minimum of 0.3 m/s for repositioning
@@ -3182,6 +3197,7 @@ MulticopterPositionControl::task_main()
 		    _control_mode.flag_control_velocity_enabled ||
 		    _control_mode.flag_control_acceleration_enabled) {
 
+
 			do_control();
 
 			/* fill local position, velocity and thrust setpoint */
@@ -3214,6 +3230,17 @@ MulticopterPositionControl::task_main()
 			/* store last velocity in case a mode switch to position control occurs */
 			_vel_sp_prev = _vel;
 		}
+
+
+        curr_val =  _control_mode.flag_control_manual_enabled;
+
+        if (prev_val != curr_val){
+            PX4_INFO("Switched From  : %d to %d", prev_val,curr_val);
+            PX4_INFO("_control_mode.flag_control_manual_enabled %d", _control_mode.flag_control_manual_enabled);
+        }
+
+        prev_val = _control_mode.flag_control_manual_enabled;
+
 
 		/* generate attitude setpoint from manual controls */
 		if (_control_mode.flag_control_manual_enabled && _control_mode.flag_control_attitude_enabled) {

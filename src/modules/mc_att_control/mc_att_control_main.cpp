@@ -81,6 +81,7 @@
 #include <uORB/topics/vehicle_control_mode.h>
 #include <uORB/topics/vehicle_rates_setpoint.h>
 #include <uORB/topics/vehicle_status.h>
+#include <uORB/topics/lqr_control.h>
 
 /**
  * Multicopter attitude control app start / stop handling function
@@ -137,6 +138,7 @@ private:
 	int		_sensor_gyro_sub[MAX_GYRO_COUNT];	/**< gyro data subscription */
 	int		_sensor_correction_sub;	/**< sensor thermal correction subscription */
 	int		_sensor_bias_sub;	/**< sensor in-run bias correction subscription */
+    int     _lqr_control_sub;       /**< LQR Control Subscription */
 
 	unsigned _gyro_count;
 	int _selected_gyro;
@@ -161,6 +163,7 @@ private:
 	struct sensor_gyro_s			_sensor_gyro;		/**< gyro data before thermal correctons and ekf bias estimates are applied */
 	struct sensor_correction_s		_sensor_correction;	/**< sensor thermal corrections */
 	struct sensor_bias_s			_sensor_bias;		/**< sensor in-run bias corrections */
+    struct lqr_control_s            _lqr_control;       /**< Controls from LQR Controller */
 
 	MultirotorMixer::saturation_status _saturation_status{};
 
@@ -291,6 +294,7 @@ private:
 	void		vehicle_motor_limits_poll();
 	void		vehicle_rates_setpoint_poll();
 	void		vehicle_status_poll();
+    void        lqr_control_poll();
 
 	/**
 	 * Attitude controller.
@@ -340,6 +344,7 @@ MulticopterAttitudeControl::MulticopterAttitudeControl() :
 	_battery_status_sub(-1),
 	_sensor_correction_sub(-1),
 	_sensor_bias_sub(-1),
+    _lqr_control_sub(-1),
 
 	/* gyro selection */
 	_gyro_count(1),
@@ -514,6 +519,7 @@ MulticopterAttitudeControl::parameters_update()
 
 	/* roll gains */
 	param_get(_params_handles.roll_p, &v);
+
 	_params.att_p(0) = v * (ATTITUDE_TC_DEFAULT / roll_tc);
 	param_get(_params_handles.roll_rate_p, &v);
 	_params.rate_p(0) = v * (ATTITUDE_TC_DEFAULT / roll_tc);
@@ -798,6 +804,18 @@ MulticopterAttitudeControl::sensor_bias_poll()
 
 }
 
+void
+MulticopterAttitudeControl::lqr_control_poll(){
+    /* check if there is a new message */
+    bool updated;
+    orb_check(_lqr_control_sub, &updated);
+
+    if (updated) {
+        orb_copy(ORB_ID(lqr_control), _lqr_control_sub, &_lqr_control);
+    }
+}
+
+
 /**
  * Attitude controller.
  * Input: 'vehicle_attitude_setpoint' topics (depending on mode)
@@ -1072,8 +1090,10 @@ MulticopterAttitudeControl::task_main()
 	_vehicle_status_sub = orb_subscribe(ORB_ID(vehicle_status));
 	_motor_limits_sub = orb_subscribe(ORB_ID(multirotor_motor_limits));
 	_battery_status_sub = orb_subscribe(ORB_ID(battery_status));
+    _lqr_control_sub = orb_subscribe(ORB_ID(lqr_control));
 
 	_gyro_count = math::min(orb_group_count(ORB_ID(sensor_gyro)), MAX_GYRO_COUNT);
+    PX4_INFO("Gyro Count = %d",_gyro_count);
 
 	if (_gyro_count == 0) {
 		_gyro_count = 1;
@@ -1092,6 +1112,8 @@ MulticopterAttitudeControl::task_main()
 	/* wakeup source: gyro data from sensor selected by the sensor app */
 	px4_pollfd_struct_t poll_fds = {};
 	poll_fds.events = POLLIN;
+
+
 
 	while (!_task_should_exit) {
 
@@ -1142,6 +1164,9 @@ MulticopterAttitudeControl::task_main()
 			vehicle_attitude_poll();
 			sensor_correction_poll();
 			sensor_bias_poll();
+            lqr_control_poll();
+
+            /*PX4_INFO("LQR Control Poll : %f",(double) _lqr_control.roll);*/
 
 			/* Check if we are in rattitude mode and the pilot is above the threshold on pitch
 			 * or roll (yaw can rotate 360 in normal att control).  If both are true don't
@@ -1153,6 +1178,7 @@ MulticopterAttitudeControl::task_main()
 				}
 			}
 
+
 			if (_v_control_mode.flag_control_attitude_enabled) {
 
 				if (_ts_opt_recovery == nullptr) {
@@ -1160,7 +1186,7 @@ MulticopterAttitudeControl::task_main()
 					// is not a tailsitter, do normal attitude control
 					control_attitude(dt);
 
-				} else {
+				} else {                 
 					vehicle_attitude_setpoint_poll();
 					_thrust_sp = _v_att_sp.thrust;
 					math::Quaternion q(_v_att.q[0], _v_att.q[1], _v_att.q[2], _v_att.q[3]);
@@ -1225,6 +1251,7 @@ MulticopterAttitudeControl::task_main()
 			}
 
 			if (_v_control_mode.flag_control_rates_enabled) {
+
 				control_attitude_rates(dt);
 
 				/* publish actuator controls */
