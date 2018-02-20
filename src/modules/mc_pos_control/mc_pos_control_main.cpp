@@ -67,6 +67,7 @@
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_local_position_setpoint.h>
 #include <uORB/topics/vehicle_status.h>
+#include <uORB/topics/att_pos_mocap.h>
 
 #include <float.h>
 #include <lib/geo/geo.h>
@@ -145,6 +146,7 @@ private:
 	int		_local_pos_sub;			/**< vehicle local position */
 	int		_pos_sp_triplet_sub;		/**< position setpoint triplet */
 	int		_home_pos_sub; 			/**< home position */
+    int     _att_pos_mocap_sub;
 
 	orb_advert_t	_att_sp_pub;			/**< attitude setpoint publication */
 	orb_advert_t	_local_pos_sp_pub;		/**< vehicle local position setpoint publication */
@@ -160,7 +162,9 @@ private:
 	struct vehicle_local_position_s			_local_pos;		/**< vehicle local position */
 	struct position_setpoint_triplet_s		_pos_sp_triplet;	/**< vehicle global position setpoint triplet */
 	struct vehicle_local_position_setpoint_s	_local_pos_sp;		/**< vehicle local position setpoint */
+    struct att_pos_mocap_s              _att_pos_mocap;
 	struct home_position_s				_home_pos; 				/**< home position */
+
 
 	control::BlockParamFloat _manual_thr_min; /**< minimal throttle output when flying in manual mode */
 	control::BlockParamFloat _manual_thr_max; /**< maximal throttle output when flying in manual mode */
@@ -395,6 +399,7 @@ private:
 
 	bool manual_wants_takeoff();
 
+    void lqr_control(float dt);
 	/**
 	 * Shim for calling task_main from task_create.
 	 */
@@ -425,6 +430,7 @@ MulticopterPositionControl::MulticopterPositionControl() :
 	_local_pos_sub(-1),
 	_pos_sp_triplet_sub(-1),
 	_home_pos_sub(-1),
+    _att_pos_mocap_sub(-1),
 
 	/* publications */
 	_att_sp_pub(nullptr),
@@ -439,6 +445,7 @@ MulticopterPositionControl::MulticopterPositionControl() :
 	_local_pos{},
 	_pos_sp_triplet{},
 	_local_pos_sp{},
+    _att_pos_mocap{},
 	_home_pos{},
 	_manual_thr_min(this, "MANTHR_MIN"),
 	_manual_thr_max(this, "MANTHR_MAX"),
@@ -1488,10 +1495,14 @@ MulticopterPositionControl::control_manual()
 void
 MulticopterPositionControl::control_non_manual()
 {
-	/* select control source */
+    /* select control source*/
+
+    /*_control_mode.flag_control_offboard_enabled is True
+     * IF CODE EXECUTED IN OFFBOARD MODE
+     * */
 	if (_control_mode.flag_control_offboard_enabled) {
 		/* offboard control */
-		control_offboard();
+        control_offboard();
 		_mode_auto = false;
 
 	} else {
@@ -1507,11 +1518,14 @@ MulticopterPositionControl::control_non_manual()
 			      PX4_ISFINITE(_pos_sp_triplet.current.vy) &&
 			      _pos_sp_triplet.current.velocity_valid;
 
+
+/*----------------------------------------------------------------------------------------------------------------*/
+    /* IF AND ELSE ARE NOT EXECUTED IN THE OFFBOARD MODE*/
 	// do not go slower than the follow target velocity when position tracking is active (set to valid)
 	if (_pos_sp_triplet.current.type == position_setpoint_s::SETPOINT_TYPE_FOLLOW_TARGET &&
 	    velocity_valid &&
 	    _pos_sp_triplet.current.position_valid) {
-
+        PX4_INFO("FOLLOW TARGET WITH VALID POSITION");
 		math::Vector<3> ft_vel(_pos_sp_triplet.current.vx, _pos_sp_triplet.current.vy, 0);
 
 		float cos_ratio = (ft_vel * _vel_sp) / (ft_vel.length() * _vel_sp.length());
@@ -1535,21 +1549,27 @@ MulticopterPositionControl::control_non_manual()
 
 	} else if (_pos_sp_triplet.current.type == position_setpoint_s::SETPOINT_TYPE_FOLLOW_TARGET &&
 		   velocity_valid) {
-
+        PX4_INFO("FOLLOW TARGET WITHOUT VALID POSITION");
 		_vel_sp(0) = _pos_sp_triplet.current.vx;
 		_vel_sp(1) = _pos_sp_triplet.current.vy;
 	}
 
+    /* IF CODE NOT EXECUTED IN OFF_BOARD_MODE */
 	/* use constant descend rate when landing, ignore altitude setpoint */
 	if (_pos_sp_triplet.current.valid
 	    && _pos_sp_triplet.current.type == position_setpoint_s::SETPOINT_TYPE_LAND) {
+        //PX4_INFO("LAND");
 		_vel_sp(2) = _params.land_speed;
 		_run_alt_control = false;
 	}
 
+/*----------------------------------------------------------------------------------------------------------------*/
+
+    /* CODE EXECUTED IF THE SYSTEM IS IDLE */
+    /* ELSE CODE IS EXECUTED IN OFF_BOARD_MODE */
 	if (_pos_sp_triplet.current.valid
 	    && _pos_sp_triplet.current.type == position_setpoint_s::SETPOINT_TYPE_IDLE) {
-		/* idle state, don't run controller and set zero thrust */
+        /* idle state, don't run controller and set zero thrust */
 		_R_setpoint.identity();
 
 		matrix::Quatf qd = _R_setpoint;
@@ -1574,8 +1594,10 @@ MulticopterPositionControl::control_offboard()
     /* _pos_sp_triplet.current.valid  = 1*/
 	if (_pos_sp_triplet.current.valid) {
 
-        /* _pos_sp_triplet.current.position_valid = 1*/
-        /* _pos_sp_triplet.current.velocity_valid = 0*/
+        /* _pos_sp_triplet.current.position_valid = 1
+        * _pos_sp_triplet.current.velocity_valid = 0
+        * IF CODE EXECUTED IN OFFBOARD MODE */
+
 		if (_control_mode.flag_control_position_enabled && _pos_sp_triplet.current.position_valid) {
 			/* control position */
 			_pos_sp(0) = _pos_sp_triplet.current.x;
@@ -1588,7 +1610,7 @@ MulticopterPositionControl::control_offboard()
 			/* control velocity */
 
 			/* reset position setpoint to current position if needed */
-			reset_pos_sp();
+            reset_pos_sp();
 
 			if (fabsf(_pos_sp_triplet.current.vx) <= FLT_EPSILON &&
 			    fabsf(_pos_sp_triplet.current.vy) <= FLT_EPSILON &&
@@ -1624,8 +1646,9 @@ MulticopterPositionControl::control_offboard()
 			}
 		}
 
-        /* _pos_sp_triplet.current.alt_valid = 1 */
-        /* _pos_sp_triplet.current.velocity_valid = 0*/
+        /* _pos_sp_triplet.current.alt_valid = 1
+        * _pos_sp_triplet.current.velocity_valid = 0
+        * IF CODE EXECUTED IN OFFBOARD MODE */
 
 		if (_control_mode.flag_control_altitude_enabled && _pos_sp_triplet.current.alt_valid) {
 			/* control altitude as it is enabled */
@@ -2409,6 +2432,8 @@ MulticopterPositionControl::do_control()
 	_run_pos_control = true;
 	_run_alt_control = true;
 
+    /* _control_mode.flag_control_manual_enabled is False */
+    // CODE NOT EXECUTED IN OFFBOARD MODE
     if (_control_mode.flag_control_manual_enabled) {
 		/* manual control */
         control_manual();
@@ -2451,9 +2476,9 @@ void
 MulticopterPositionControl::calculate_velocity_setpoint()
 {
 	/* run position & altitude controllers, if enabled (otherwise use already computed velocity setpoints) */
+    /*  CODE EXECUTED IN OFF_BOARD MODE */
 	if (_run_pos_control) {
-
-		// If for any reason, we get a NaN position setpoint, we better just stay where we are.
+        // If for any reason, we get a NaN position setpoint, we better just stay where we are.
 		if (PX4_ISFINITE(_pos_sp(0)) && PX4_ISFINITE(_pos_sp(1))) {
 			_vel_sp(0) = (_pos_sp(0) - _pos(0)) * _params.pos_p(0);
 			_vel_sp(1) = (_pos_sp(1) - _pos(1)) * _params.pos_p(1);
@@ -2471,6 +2496,7 @@ MulticopterPositionControl::calculate_velocity_setpoint()
 		limit_altitude();
 	}
 
+    /*  CODE EXECUTED IN OFF_BOARD MODE */
 	if (_run_alt_control) {
 		if (PX4_ISFINITE(_pos_sp(2))) {
 			_vel_sp(2) = (_pos_sp(2) - _pos(2)) * _params.pos_p(2);
@@ -2565,6 +2591,7 @@ MulticopterPositionControl::calculate_velocity_setpoint()
 void
 MulticopterPositionControl::calculate_thrust_setpoint()
 {
+
 	/* reset integrals if needed */
 	if (_control_mode.flag_control_climb_rate_enabled) {
 		if (_reset_int_z) {
@@ -3030,6 +3057,28 @@ bool MulticopterPositionControl::manual_wants_takeoff()
 	return (has_manual_control_present && _manual.z > 0.65f);
 }
 
+void MulticopterPositionControl::lqr_control(float dt){
+
+    float PI = 1;
+//    bool updated;
+//    orb_check(_att_pos_mocap_sub, &updated);
+//    if(updated){
+        orb_copy(ORB_ID(att_pos_mocap), _att_pos_mocap_sub, &_att_pos_mocap);
+        PX4_INFO("INSIDE LQR x : %f Y: %f , Z: %f", (double)_att_pos_mocap.x, (double)_att_pos_mocap.y, (double)_att_pos_mocap.z);
+//        _att_sp.roll_body = 10.0f;
+//        _att_sp.pitch_body = 0.0f;
+//        _att_sp.yaw_body = 0.0f;
+        _att_sp.roll_body = _att_pos_mocap.x * PI ;
+        _att_sp.pitch_body = _att_pos_mocap.y * PI ;
+        _att_sp.yaw_body = _att_pos_mocap.z * PI ;
+
+        matrix::Quatf q_sp = matrix::Eulerf(_att_sp.roll_body, _att_sp.pitch_body, _att_sp.yaw_body);
+        q_sp.copyTo(_att_sp.q_d);
+         _att_sp.q_d_valid = true;
+//    }
+
+}
+
 void
 MulticopterPositionControl::task_main()
 {
@@ -3045,6 +3094,7 @@ MulticopterPositionControl::task_main()
 	_local_pos_sub = orb_subscribe(ORB_ID(vehicle_local_position));
 	_pos_sp_triplet_sub = orb_subscribe(ORB_ID(position_setpoint_triplet));
 	_home_pos_sub = orb_subscribe(ORB_ID(home_position));
+    _att_pos_mocap_sub = orb_subscribe(ORB_ID(att_pos_mocap));
 
 	parameters_update(true);
 
@@ -3070,6 +3120,8 @@ MulticopterPositionControl::task_main()
 
     bool prev_val = false;
     bool curr_val = false;
+    bool prev_flag_control_position_enabled = false;
+    bool curr_flag_control_position_enabled = false;
 
 	while (!_task_should_exit) {
 		/* wait for up to 20ms for data */
@@ -3183,6 +3235,17 @@ MulticopterPositionControl::task_main()
 
 		// reset the horizontal and vertical position hold flags for non-manual modes
 		// or if position / altitude is not controlled
+
+        /* Flags Switch Check */
+        curr_flag_control_position_enabled = _control_mode.flag_control_position_enabled;
+        if(prev_flag_control_position_enabled != curr_flag_control_position_enabled){
+            PX4_INFO("Switched flag_control_position_enabled from %d to %d",prev_flag_control_position_enabled,curr_flag_control_position_enabled);
+        }
+        prev_flag_control_position_enabled = curr_flag_control_position_enabled;
+
+        /* _pos_hold_engaged is always false in off board control
+         * _alt_hold_engaged is always flase in off board control
+        */
 		if (!_control_mode.flag_control_position_enabled || !_control_mode.flag_control_manual_enabled) {
 			_pos_hold_engaged = false;
 		}
@@ -3190,6 +3253,7 @@ MulticopterPositionControl::task_main()
 		if (!_control_mode.flag_control_altitude_enabled || !_control_mode.flag_control_manual_enabled) {
 			_alt_hold_engaged = false;
 		}
+
 
 		if (_control_mode.flag_control_altitude_enabled ||
 		    _control_mode.flag_control_position_enabled ||
@@ -3235,9 +3299,8 @@ MulticopterPositionControl::task_main()
         curr_val =  _control_mode.flag_control_manual_enabled;
 
         if (prev_val != curr_val){
-            PX4_INFO("Switched From  : %d to %d", prev_val,curr_val);
-            PX4_INFO("_control_mode.flag_control_manual_enabled %d", _control_mode.flag_control_manual_enabled);
-        }
+            PX4_INFO("Switched flag_control_manual_enabled From  : %d to %d", prev_val,curr_val);
+       }
 
         prev_val = _control_mode.flag_control_manual_enabled;
 
@@ -3263,7 +3326,7 @@ MulticopterPositionControl::task_main()
 		 * attitude setpoints for the transition).
 		 * - if not armed
 		 */
-		if (_control_mode.flag_armed &&
+        /*if (_control_mode.flag_armed &&
 		    (!(_control_mode.flag_control_offboard_enabled &&
 		       !(_control_mode.flag_control_position_enabled ||
 			 _control_mode.flag_control_velocity_enabled ||
@@ -3275,13 +3338,28 @@ MulticopterPositionControl::task_main()
 			} else if (_attitude_setpoint_id) {
 				_att_sp_pub = orb_advertise(_attitude_setpoint_id, &_att_sp);
 			}
-		}
+        }*/
+
+        if (_control_mode.flag_control_offboard_enabled){
+            lqr_control(dt);
+        }
+        if(1){
+                    if (_att_sp_pub != nullptr) {
+                        orb_publish(_attitude_setpoint_id, _att_sp_pub, &_att_sp);
+
+                    } else if (_attitude_setpoint_id) {
+                        _att_sp_pub = orb_advertise(_attitude_setpoint_id, &_att_sp);
+                    }
+                }
+        //_reset_int_z_manual = _control_mode.flag_armed && _control_mode.flag_control_manual_enabled
+          //                && !_control_mode.flag_control_climb_rate_enabled;
 	}
 
 	mavlink_log_info(&_mavlink_log_pub, "[mpc] stopped");
 
 	_control_task = -1;
 }
+
 
 int
 MulticopterPositionControl::start()
