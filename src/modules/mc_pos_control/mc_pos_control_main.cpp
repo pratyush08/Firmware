@@ -400,7 +400,8 @@ private:
 	bool manual_wants_takeoff();
 
     void lqr_control(float dt);
-	/**
+
+    /**
 	 * Shim for calling task_main from task_create.
 	 */
 	static void	task_main_trampoline(int argc, char *argv[]);
@@ -3079,6 +3080,7 @@ void MulticopterPositionControl::lqr_control(float dt){
 
 }
 
+
 void
 MulticopterPositionControl::task_main()
 {
@@ -3326,7 +3328,7 @@ MulticopterPositionControl::task_main()
 		 * attitude setpoints for the transition).
 		 * - if not armed
 		 */
-        /*if (_control_mode.flag_armed &&
+        if (_control_mode.flag_armed &&
 		    (!(_control_mode.flag_control_offboard_enabled &&
 		       !(_control_mode.flag_control_position_enabled ||
 			 _control_mode.flag_control_velocity_enabled ||
@@ -3338,19 +3340,19 @@ MulticopterPositionControl::task_main()
 			} else if (_attitude_setpoint_id) {
 				_att_sp_pub = orb_advertise(_attitude_setpoint_id, &_att_sp);
 			}
-        }*/
-
-        if (_control_mode.flag_control_offboard_enabled){
-            lqr_control(dt);
         }
-        if(1){
-                    if (_att_sp_pub != nullptr) {
-                        orb_publish(_attitude_setpoint_id, _att_sp_pub, &_att_sp);
 
-                    } else if (_attitude_setpoint_id) {
-                        _att_sp_pub = orb_advertise(_attitude_setpoint_id, &_att_sp);
-                    }
-                }
+//        if (_control_mode.flag_control_offboard_enabled){
+//            lqr_control(dt);
+//        }
+//        if(1){
+//                    if (_att_sp_pub != nullptr) {
+//                        orb_publish(_attitude_setpoint_id, _att_sp_pub, &_att_sp);
+
+//                    } else if (_attitude_setpoint_id) {
+//                        _att_sp_pub = orb_advertise(_attitude_setpoint_id, &_att_sp);
+//                    }
+//                }
         //_reset_int_z_manual = _control_mode.flag_armed && _control_mode.flag_control_manual_enabled
           //                && !_control_mode.flag_control_climb_rate_enabled;
 	}

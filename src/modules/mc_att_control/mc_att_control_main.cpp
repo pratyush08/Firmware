@@ -142,8 +142,10 @@ private:
     int		_sensor_bias_sub;	/**< sensor in-run bias correction subscription */
     int     _att_pos_mocap_sub;
 
+
     unsigned _gyro_count;
     int _selected_gyro;
+    bool lqr_executed;
 
     orb_advert_t	_v_rates_sp_pub;		/**< rate setpoint publication */
     orb_advert_t	_actuators_0_pub;		/**< attitude actuator controls publication */
@@ -168,6 +170,7 @@ private:
     struct att_pos_mocap_s              _att_pos_mocap;
     struct actuator_controls_s      _actuator_controls;
 
+
     MultirotorMixer::saturation_status _saturation_status{};
 
     perf_counter_t	_loop_perf;			/**< loop performance counter */
@@ -187,6 +190,7 @@ private:
     math::Matrix<3, 3>  _I;				/**< identity matrix */
 
     math::Matrix<3, 3>	_board_rotation = {};	/**< rotation matrix for the orientation that the board is mounted */
+    math::Vector<3>		prev_rates_sp;
 
     struct {
         param_t roll_p;
@@ -306,6 +310,7 @@ private:
     void		vehicle_status_poll();
     void        _att_pos_mocap_control_poll();
 
+
     /**
      * Attitude controller.
      */
@@ -355,6 +360,7 @@ MulticopterAttitudeControl::MulticopterAttitudeControl() :
     _sensor_correction_sub(-1),
     _sensor_bias_sub(-1),
     _att_pos_mocap_sub(-1),
+
 
     /* gyro selection */
     _gyro_count(1),
@@ -834,6 +840,8 @@ MulticopterAttitudeControl::_att_pos_mocap_control_poll(){
 }
 
 
+
+
 void
 MulticopterAttitudeControl::sensor_bias_poll()
 {
@@ -858,20 +866,49 @@ MulticopterAttitudeControl::control_attitude(float dt)
     vehicle_attitude_setpoint_poll();
 
     _thrust_sp = _v_att_sp.thrust;
-    bool updated;
-    orb_check(_att_pos_mocap_sub, &updated);
-    PX4_INFO("UPDATED IS %d",updated);
-    if(updated){
-           orb_copy(ORB_ID(att_pos_mocap), _att_pos_mocap_sub, &_att_pos_mocap);
-           float roll = _att_pos_mocap.x ;
-           float pitch = _att_pos_mocap.y  ;
-           float yaw = _att_pos_mocap.z  ;
-           PX4_INFO("INSIDE LQR x : %f Y: %f , Z: %f", (double)_att_pos_mocap.x, (double)_att_pos_mocap.y, (double)_att_pos_mocap.z);
 
-           _att_sp_temp = matrix::Eulerf(roll, pitch, yaw);
+//    bool updated;
+//    orb_check(_att_pos_mocap_sub, &updated);
+//    PX4_INFO("UPDATED IS %d",updated);
+//    if(updated){
+//           orb_copy(ORB_ID(att_pos_mocap), _att_pos_mocap_sub, &_att_pos_mocap);
+//           float roll = _att_pos_mocap.x ;
+//           float pitch = _att_pos_mocap.y  ;
+//           float yaw = _att_pos_mocap.z  ;
+//           PX4_INFO("INSIDE LQR x : %f Y: %f , Z: %f", (double)_att_pos_mocap.x, (double)_att_pos_mocap.y, (double)_att_pos_mocap.z);
 
-    }
-    _att_sp_temp.copyTo(_v_att_sp.q_d);
+//           _att_sp_temp = matrix::Eulerf(roll, pitch, yaw);
+
+//    }
+//    _att_sp_temp.copyTo(_v_att_sp.q_d);
+
+
+//    _att_sp_temp.copyTo(_v_att_sp.q_d);
+
+//    PX4_INFO("_v_att_sp.q_d[0] : %f, _v_att_sp.q_d[1] : %f, _v_att_sp.q_d[2] : %f, _v_att_sp.q_d[3] : %f)", (double)_v_att_sp.q_d[0],(double) _v_att_sp.q_d[1], (double) _v_att_sp.q_d[2],(double) _v_att_sp.q_d[3]);
+
+
+    if(lqr_executed){
+
+         matrix::Quatf temp;
+//         temp = _v_att_sp.q_d;
+         temp = _v_att.q;
+//         math::Quaternion t(_v_att.q[0], _v_att.q[1], _v_att.q[2], _v_att.q[3]);
+//         math::Vector<3> angles = t.to_euler();
+
+//         math::Quaternion q(_v_att_sp.q_d[0], _v_att_sp.q_d[1], _v_att_sp.q_d[2], _v_att_sp.q_d[3]);
+//         math::Vector<3> sp_angles =  q.to_euler();
+
+//         PX4_INFO(    "CALC ANGLES X : %f, Y: %f, Z: %f", (double)angles(0),(double)angles(1),(double)angles(2));
+//         PX4_INFO("SP ANGLES X : %f, Y: %f, Z: %f", (double)sp_angles(0),(double)sp_angles(1),(double)sp_angles(2));
+
+         _att_sp_temp = temp;
+         _att_sp_temp.copyTo(_v_att_sp.q_d);
+         lqr_executed =false;
+
+    }else{
+        _att_sp_temp.copyTo(_v_att_sp.q_d);
+}
 
 
     /* construct attitude setpoint rotation matrix */
@@ -1060,6 +1097,24 @@ MulticopterAttitudeControl::control_attitude_rates(float dt)
     math::Vector<3> rates_d_scaled = _params.rate_d.emult(pid_attenuations(_params.tpa_breakpoint_d, _params.tpa_rate_d));
 
     /* angular rates error */
+
+//    bool updated;
+//    orb_check(_att_pos_mocap_sub, &updated);
+//    PX4_INFO("UPDATED IS %d",updated);
+//    if(updated){
+//           orb_copy(ORB_ID(att_pos_mocap), _att_pos_mocap_sub, &_att_pos_mocap);
+//           prev_rates_sp(0) = _att_pos_mocap.x;
+//           prev_rates_sp(1) = _att_pos_mocap.y;
+//           prev_rates_sp(2) = _att_pos_mocap.z;
+//           PX4_INFO("INSIDE LQR x : %f Y: %f , Z: %f", (double)_att_pos_mocap.x, (double)_att_pos_mocap.y, (double)_att_pos_mocap.z);
+//    }
+//        _rates_sp(0) = prev_rates_sp(0) ;
+//        _rates_sp(1) = prev_rates_sp(1)  ;
+//        _rates_sp(2) = prev_rates_sp(2)  ;
+
+
+
+
     math::Vector<3> rates_err = _rates_sp - rates;
 
     /* apply low-pass filtering to the rates for D-term */
@@ -1067,6 +1122,9 @@ MulticopterAttitudeControl::control_attitude_rates(float dt)
         _lp_filters_d[0].apply(rates(0)),
         _lp_filters_d[1].apply(rates(1)),
         _lp_filters_d[2].apply(rates(2)));
+
+
+
 
     _att_control = rates_p_scaled.emult(rates_err) +
                _rates_int -
@@ -1144,6 +1202,7 @@ MulticopterAttitudeControl::task_main()
     _battery_status_sub = orb_subscribe(ORB_ID(battery_status));
     _att_pos_mocap_sub = orb_subscribe(ORB_ID(att_pos_mocap));
 
+
     _gyro_count = math::min(orb_group_count(ORB_ID(sensor_gyro)), MAX_GYRO_COUNT);
 
     if (_gyro_count == 0) {
@@ -1168,6 +1227,11 @@ MulticopterAttitudeControl::task_main()
     hrt_abstime last_run = task_start;
     float dt_accumulator = 0.f;
     int loop_counter = 0;
+    matrix::Quatf  temp = _v_att_sp.q_d;
+    temp = _att_sp_temp;
+
+
+
 
     while (!_task_should_exit) {
 
@@ -1300,13 +1364,52 @@ MulticopterAttitudeControl::task_main()
                 }
             }
 
+
+
+
             if (_v_control_mode.flag_control_rates_enabled) {
                 control_attitude_rates(dt);
 
+                bool updated;
+                orb_check(_att_pos_mocap_sub, &updated);
+//                PX4_INFO("UPDATED IS %d",updated);
+                if(updated){
+                       orb_copy(ORB_ID(att_pos_mocap), _att_pos_mocap_sub, &_att_pos_mocap);
+                       _actuators.control[0] = _att_pos_mocap.x;
+                       _actuators.control[1] = _att_pos_mocap.y;
+                       _actuators.control[2] = _att_pos_mocap.z;
+
+//                       prev_rates_sp(0) = _actuators.control[0];
+//                       prev_rates_sp(1) = _actuators.control[1];
+//                       prev_rates_sp(2) = _actuators.control[2];
+                       lqr_executed = true;
+
+
+//                       float roll =  _att_pos_mocap.x  - _att_control(0) ;
+//                       float pitch =_att_pos_mocap.y - _att_control(1)  ;
+//                       float yaw =_att_pos_mocap.z -  _att_control(2)  ;
+//                       PX4_INFO("ROLL :%f , PITCH :%f , YAW :%f",(double)roll,(double)pitch, (double)yaw);
+                       PX4_INFO("INSIDE LQR x : %f Y: %f , Z: %f", (double)_att_pos_mocap.x, (double)_att_pos_mocap.y, (double)_att_pos_mocap.z);
+                }
+                else{
+
+                     _actuators.control[0] = (PX4_ISFINITE(_att_control(0))) ? _att_control(0) : 0.0f;
+                     _actuators.control[1] = (PX4_ISFINITE(_att_control(1))) ? _att_control(1) : 0.0f;
+                     _actuators.control[2] = (PX4_ISFINITE(_att_control(2))) ? _att_control(2) : 1.0f;
+
+
+//                    _actuators.control[0] = prev_rates_sp(0);
+//                    _actuators.control[1] = prev_rates_sp(1);
+//                    _actuators.control[2] = prev_rates_sp(2);
+                }
+
+
+//                PX4_INFO("INSIDE LQR x : %f Y: %f , Z: %f", (double)_att_control(0), (double)_att_control(1), (double)_att_control(2));
+
                 /* publish actuator controls */
-                _actuators.control[0] = (PX4_ISFINITE(_att_control(0))) ? _att_control(0) : 0.0f;
-                _actuators.control[1] = (PX4_ISFINITE(_att_control(1))) ? _att_control(1) : 0.0f;
-                _actuators.control[2] = (PX4_ISFINITE(_att_control(2))) ? _att_control(2) : 0.0f;
+//                _actuators.control[0] = (PX4_ISFINITE(_att_control(0))) ? _att_control(0) : 0.0f;
+//                _actuators.control[1] = (PX4_ISFINITE(_att_control(1))) ? _att_control(1) : 0.0f;
+//                _actuators.control[2] = (PX4_ISFINITE(_att_control(2))) ? _att_control(2) : 0.0f;
                 _actuators.control[3] = (PX4_ISFINITE(_thrust_sp)) ? _thrust_sp : 0.0f;
                 _actuators.control[7] = _v_att_sp.landing_gear;
                 _actuators.timestamp = hrt_absolute_time();
